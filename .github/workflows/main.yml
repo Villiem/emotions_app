@@ -23,7 +23,7 @@ jobs:
       
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name EmotionAnalyzer emotion_analyzer.py
+          pyinstaller --onefile --windowed --name EmotionAnalyzer --hidden-import=polars --hidden-import=numpy --hidden-import=plotly --hidden-import=openpyxl --hidden-import=xlsxwriter --collect-all=fastexcel --collect-all=polars emotion_analyzer.py
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
