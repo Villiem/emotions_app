@@ -2,72 +2,211 @@
 # -*- coding: utf-8 -*-
 """
 Emotion Analyzer - Aplicación para análisis de emociones en video
-con ponderación por potencia (Power Law)
+con ponderación por potencia
+@author: emiliano
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, colorchooser
 import polars as pl
 import plotly.graph_objects as go
 import numpy as np
-import os
 import webbrowser
 from pathlib import Path
 
 
 class EmotionAnalyzerApp:
     
+    # Columnas originales en inglés (para leer el archivo)
     EMOTION_COLS = ["Negative", "Disgust", "Fear", "Sadness", "Skepticism", 
                     "Neutral", "Surprise", "Delight"]
+    
+    # Traducción al español (Sadness → Atención)
+    EMOTION_TRANSLATION = {
+        "Negative": "Enojo",
+        "Disgust": "Disgusto", 
+        "Fear": "Miedo",
+        "Sadness": "Atención",
+        "Skepticism": "Escepticismo",
+        "Neutral": "Neutral",
+        "Surprise": "Sorpresa",
+        "Delight": "Gusto"
+    }
+    
+    # Paletas de colores predefinidas
+    PALETTES = {
+        "Vibrante": {
+            "Enojo": "#E74C3C",
+            "Disgusto": "#9B59B6",
+            "Miedo": "#34495E",
+            "Atención": "#3498DB",
+            "Escepticismo": "#F39C12",
+            "Neutral": "#95A5A6",
+            "Sorpresa": "#1ABC9C",
+            "Gusto": "#2ECC71"
+        },
+        "Escala de grises": {
+            "Enojo": "#1A1A1A",
+            "Disgusto": "#333333",
+            "Miedo": "#4D4D4D",
+            "Atención": "#666666",
+            "Escepticismo": "#808080",
+            "Neutral": "#999999",
+            "Sorpresa": "#B3B3B3",
+            "Gusto": "#CCCCCC"
+        },
+        "Pastel": {
+            "Enojo": "#FFB3BA",
+            "Disgusto": "#BAFFC9",
+            "Miedo": "#BAE1FF",
+            "Atención": "#FFFFBA",
+            "Escepticismo": "#FFD9BA",
+            "Neutral": "#E0BBE4",
+            "Sorpresa": "#D4F0F0",
+            "Gusto": "#CCE2CB"
+        },
+        "Cálidos": {
+            "Enojo": "#D32F2F",
+            "Disgusto": "#F57C00",
+            "Miedo": "#FFA000",
+            "Atención": "#FFCA28",
+            "Escepticismo": "#FFE082",
+            "Neutral": "#A1887F",
+            "Sorpresa": "#FF7043",
+            "Gusto": "#FF5722"
+        },
+        "Fríos": {
+            "Enojo": "#0D47A1",
+            "Disgusto": "#1565C0",
+            "Miedo": "#1976D2",
+            "Atención": "#2196F3",
+            "Escepticismo": "#42A5F5",
+            "Neutral": "#64B5F6",
+            "Sorpresa": "#00ACC1",
+            "Gusto": "#26A69A"
+        },
+        "Alto contraste": {
+            "Enojo": "#FF0000",
+            "Disgusto": "#00FF00",
+            "Miedo": "#0000FF",
+            "Atención": "#FFFF00",
+            "Escepticismo": "#FF00FF",
+            "Neutral": "#00FFFF",
+            "Sorpresa": "#FF8000",
+            "Gusto": "#8000FF"
+        }
+    }
     
     def __init__(self, root):
         self.root = root
         self.root.title("Emotion Analyzer")
-        self.root.geometry("600x500")
+        self.root.geometry("750x700")
         self.root.resizable(True, True)
         
         # Variables
         self.filepath = tk.StringVar()
         self.a_param = tk.DoubleVar(value=4.5167)
         self.b_param = tk.DoubleVar(value=-0.228)
+        self.remove_last_second = tk.BooleanVar(value=False)
+        self.selected_palette = tk.StringVar(value="Vibrante")
         self.df_original = None
         self.df_weighted = None
+        
+        # Configuración individual por emoción: {emocion: {"color": str, "width": IntVar, "visible": BooleanVar}}
+        self.emotion_config = {}
+        for emotion in self.PALETTES["Vibrante"].keys():
+            self.emotion_config[emotion] = {
+                "color": self.PALETTES["Vibrante"][emotion],
+                "width": tk.IntVar(value=2),
+                "visible": tk.BooleanVar(value=True)
+            }
         
         self.setup_ui()
     
     def setup_ui(self):
         # Frame principal con padding
-        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame = ttk.Frame(self.root, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # === Sección: Selección de archivo ===
-        file_frame = ttk.LabelFrame(main_frame, text="📁 Archivo de datos", padding="10")
-        file_frame.pack(fill=tk.X, pady=(0, 15))
+        file_frame = ttk.LabelFrame(main_frame, text="📁 Archivo de datos", padding="8")
+        file_frame.pack(fill=tk.X, pady=(0, 8))
         
         ttk.Entry(file_frame, textvariable=self.filepath, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         ttk.Button(file_frame, text="Seleccionar...", command=self.select_file).pack(side=tk.RIGHT)
         
         # === Sección: Parámetros ===
-        params_frame = ttk.LabelFrame(main_frame, text="⚙️ Parámetros de ponderación (y = a × t^b)", padding="10")
-        params_frame.pack(fill=tk.X, pady=(0, 15))
+        params_frame = ttk.LabelFrame(main_frame, text="⚙️ Parámetros de ponderación (y = a × t^b)", padding="8")
+        params_frame.pack(fill=tk.X, pady=(0, 8))
         
-        # Parámetro a
-        a_frame = ttk.Frame(params_frame)
-        a_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(a_frame, text="a (escala):").pack(side=tk.LEFT)
-        ttk.Entry(a_frame, textvariable=self.a_param, width=10).pack(side=tk.LEFT, padx=10)
-        ttk.Label(a_frame, text="(default: 4.5167)", foreground="gray").pack(side=tk.LEFT)
+        params_inner = ttk.Frame(params_frame)
+        params_inner.pack(fill=tk.X)
         
-        # Parámetro b
-        b_frame = ttk.Frame(params_frame)
-        b_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(b_frame, text="b (decaimiento):").pack(side=tk.LEFT)
-        ttk.Entry(b_frame, textvariable=self.b_param, width=10).pack(side=tk.LEFT, padx=10)
-        ttk.Label(b_frame, text="(más negativo = decae más rápido)", foreground="gray").pack(side=tk.LEFT)
+        ttk.Label(params_inner, text="a:").pack(side=tk.LEFT)
+        ttk.Entry(params_inner, textvariable=self.a_param, width=8).pack(side=tk.LEFT, padx=(5, 15))
+        ttk.Label(params_inner, text="b:").pack(side=tk.LEFT)
+        ttk.Entry(params_inner, textvariable=self.b_param, width=8).pack(side=tk.LEFT, padx=(5, 15))
+        ttk.Checkbutton(params_inner, text="Quitar último segundo", 
+                        variable=self.remove_last_second).pack(side=tk.LEFT, padx=15)
+        
+        # === Sección: Personalización de emociones ===
+        style_frame = ttk.LabelFrame(main_frame, text="🎨 Personalización de emociones", padding="8")
+        style_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        
+        # Selector de paleta
+        palette_frame = ttk.Frame(style_frame)
+        palette_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(palette_frame, text="Paleta:").pack(side=tk.LEFT)
+        palette_combo = ttk.Combobox(palette_frame, textvariable=self.selected_palette, 
+                                      values=list(self.PALETTES.keys()), state="readonly", width=20)
+        palette_combo.pack(side=tk.LEFT, padx=10)
+        palette_combo.bind("<<ComboboxSelected>>", self.apply_palette)
+        
+        ttk.Button(palette_frame, text="Aplicar paleta", command=self.apply_palette).pack(side=tk.LEFT, padx=5)
+        
+        # Grid de emociones
+        emotions_grid = ttk.Frame(style_frame)
+        emotions_grid.pack(fill=tk.BOTH, expand=True)
+        
+        # Headers
+        ttk.Label(emotions_grid, text="Visible", font=("Arial", 9, "bold")).grid(row=0, column=0, padx=5, pady=3)
+        ttk.Label(emotions_grid, text="Emoción", font=("Arial", 9, "bold")).grid(row=0, column=1, padx=5, pady=3, sticky="w")
+        ttk.Label(emotions_grid, text="Color", font=("Arial", 9, "bold")).grid(row=0, column=2, padx=5, pady=3)
+        ttk.Label(emotions_grid, text="Grosor", font=("Arial", 9, "bold")).grid(row=0, column=3, padx=5, pady=3)
+        
+        self.color_buttons = {}
+        
+        for i, (emotion, config) in enumerate(self.emotion_config.items(), start=1):
+            # Checkbox visible
+            ttk.Checkbutton(emotions_grid, variable=config["visible"]).grid(row=i, column=0, padx=5, pady=2)
+            
+            # Nombre emoción
+            ttk.Label(emotions_grid, text=emotion, width=12).grid(row=i, column=1, padx=5, pady=2, sticky="w")
+            
+            # Botón color
+            color_btn = tk.Button(emotions_grid, bg=config["color"], width=6, height=1,
+                                  relief=tk.FLAT, cursor="hand2",
+                                  command=lambda e=emotion: self.pick_color(e))
+            color_btn.grid(row=i, column=2, padx=5, pady=2)
+            self.color_buttons[emotion] = color_btn
+            
+            # Spinbox grosor
+            ttk.Spinbox(emotions_grid, from_=1, to=6, textvariable=config["width"], 
+                        width=5).grid(row=i, column=3, padx=5, pady=2)
+        
+        # Botones rápidos
+        quick_frame = ttk.Frame(style_frame)
+        quick_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(quick_frame, text="Mostrar todas", command=self.show_all_emotions).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="Ocultar todas", command=self.hide_all_emotions).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="Grosor +", command=lambda: self.adjust_all_widths(1)).pack(side=tk.LEFT, padx=3)
+        ttk.Button(quick_frame, text="Grosor -", command=lambda: self.adjust_all_widths(-1)).pack(side=tk.LEFT, padx=3)
         
         # === Sección: Acciones ===
-        actions_frame = ttk.LabelFrame(main_frame, text="🚀 Acciones", padding="10")
-        actions_frame.pack(fill=tk.X, pady=(0, 15))
+        actions_frame = ttk.LabelFrame(main_frame, text="🚀 Acciones", padding="8")
+        actions_frame.pack(fill=tk.X, pady=(0, 8))
         
         btn_frame = ttk.Frame(actions_frame)
         btn_frame.pack(fill=tk.X)
@@ -77,10 +216,10 @@ class EmotionAnalyzerApp:
         ttk.Button(btn_frame, text="💾 Exportar todo", command=self.export_all).pack(side=tk.LEFT, padx=5)
         
         # === Sección: Log/Status ===
-        log_frame = ttk.LabelFrame(main_frame, text="📋 Estado", padding="10")
+        log_frame = ttk.LabelFrame(main_frame, text="📋 Estado", padding="8")
         log_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.log_text = tk.Text(log_frame, height=10, state=tk.DISABLED, wrap=tk.WORD)
+        self.log_text = tk.Text(log_frame, height=5, state=tk.DISABLED, wrap=tk.WORD)
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
@@ -88,6 +227,41 @@ class EmotionAnalyzerApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.log("Aplicación iniciada. Selecciona un archivo Excel para comenzar.")
+    
+    def apply_palette(self, event=None):
+        """Aplica la paleta seleccionada."""
+        palette_name = self.selected_palette.get()
+        palette = self.PALETTES.get(palette_name, self.PALETTES["Vibrante"])
+        
+        for emotion, color in palette.items():
+            if emotion in self.emotion_config:
+                self.emotion_config[emotion]["color"] = color
+                self.color_buttons[emotion].configure(bg=color)
+        
+        self.log(f"Paleta '{palette_name}' aplicada")
+    
+    def pick_color(self, emotion):
+        """Abre selector de color para una emoción."""
+        current_color = self.emotion_config[emotion]["color"]
+        color = colorchooser.askcolor(initialcolor=current_color, title=f"Color para {emotion}")
+        
+        if color[1]:
+            self.emotion_config[emotion]["color"] = color[1]
+            self.color_buttons[emotion].configure(bg=color[1])
+            self.log(f"Color de {emotion}: {color[1]}")
+    
+    def show_all_emotions(self):
+        for config in self.emotion_config.values():
+            config["visible"].set(True)
+    
+    def hide_all_emotions(self):
+        for config in self.emotion_config.values():
+            config["visible"].set(False)
+    
+    def adjust_all_widths(self, delta):
+        for config in self.emotion_config.values():
+            new_val = config["width"].get() + delta
+            config["width"].set(max(1, min(6, new_val)))
     
     def log(self, message):
         """Agrega mensaje al log."""
@@ -104,7 +278,7 @@ class EmotionAnalyzerApp:
         )
         if filepath:
             self.filepath.set(filepath)
-            self.log(f"Archivo seleccionado: {Path(filepath).name}")
+            self.log(f"Archivo: {Path(filepath).name}")
     
     def preprocess_data(self, df):
         """Detecta el formato del df y lo normaliza."""
@@ -136,7 +310,15 @@ class EmotionAnalyzerApp:
             *[pl.col(e).cast(pl.Float64) for e in available_emotions]
         ])
         
-        return df_t.select(["segundos"] + available_emotions)
+        # Renombrar columnas al español
+        rename_dict = {eng: self.EMOTION_TRANSLATION[eng] 
+                       for eng in available_emotions 
+                       if eng in self.EMOTION_TRANSLATION}
+        df_t = df_t.rename(rename_dict)
+        
+        spanish_emotions = [self.EMOTION_TRANSLATION.get(e, e) for e in available_emotions]
+        
+        return df_t.select(["segundos"] + spanish_emotions)
     
     def power_weights(self, t, a, b, normalize=False):
         """Calcula pesos con función potencia."""
@@ -174,14 +356,14 @@ class EmotionAnalyzerApp:
             
             a = self.a_param.get()
             b = self.b_param.get()
-            self.log(f"Aplicando ponderación (a={a}, b={b})...")
+            self.log(f"Ponderación aplicada (a={a}, b={b})")
             self.df_weighted = self.apply_power_weighting(self.df_original, a, b)
             
             n_rows = len(self.df_original)
             n_emotions = len([c for c in self.df_original.columns if c != "segundos"])
-            self.log(f"✅ Procesado: {n_rows} segundos, {n_emotions} emociones")
+            self.log(f"✅ {n_rows} segundos, {n_emotions} emociones")
             
-            messagebox.showinfo("Éxito", f"Datos procesados correctamente.\n{n_rows} puntos temporales, {n_emotions} emociones.")
+            messagebox.showinfo("Éxito", f"Datos procesados.\n{n_rows} puntos, {n_emotions} emociones.")
             
         except Exception as e:
             self.log(f"❌ Error: {str(e)}")
@@ -195,31 +377,50 @@ class EmotionAnalyzerApp:
         fig = go.Figure()
         emotion_cols = [c for c in self.df_original.columns if c != "segundos"]
         
+        # Filtrar último segundo si está activado
+        df_orig = self.df_original
+        df_weight = self.df_weighted
+        
+        if self.remove_last_second.get():
+            max_sec = df_orig["segundos"].max()
+            df_orig = df_orig.filter(pl.col("segundos") < max_sec)
+            df_weight = df_weight.filter(pl.col("segundos") < max_sec)
+        
         for col in emotion_cols:
+            config = self.emotion_config.get(col)
+            if not config or not config["visible"].get():
+                continue
+            
+            color = config["color"]
+            width = config["width"].get()
+            
             # Original (punteado)
             fig.add_trace(go.Scatter(
-                x=self.df_original["segundos"], 
-                y=self.df_original[col],
+                x=df_orig["segundos"], 
+                y=df_orig[col],
                 name=col, 
                 mode='lines', 
-                line=dict(width=1, dash='dot')
+                line=dict(width=max(1, width-1), dash='dot', color=color),
+                legendgroup=col
             ))
             # Ponderado (sólido)
             fig.add_trace(go.Scatter(
-                x=self.df_weighted["segundos"], 
-                y=self.df_weighted[f"{col}_pw"],
-                name=f"{col} (Ponderado)", 
+                x=df_weight["segundos"], 
+                y=df_weight[f"{col}_pw"],
+                name=f"{col} (Pond.)", 
                 mode='lines', 
-                line=dict(width=2)
+                line=dict(width=width, color=color),
+                legendgroup=col
             ))
         
         fig.update_layout(
-            title="Emociones - Original vs Ponderación Potencia",
+            title="Emociones - Original (punteado) vs Ponderado (sólido)",
             xaxis_title="Segundos",
             yaxis_title="Intensidad",
             legend_title="Emociones",
             template="plotly_white",
-            font=dict(family="Arial, sans-serif", size=12)
+            font=dict(family="Arial, sans-serif", size=12),
+            legend=dict(groupclick="toggleitem")
         )
         
         return fig
@@ -235,9 +436,9 @@ class EmotionAnalyzerApp:
             temp_path = Path.home() / "emotion_plot_temp.html"
             fig.write_html(str(temp_path))
             webbrowser.open(f"file://{temp_path}")
-            self.log(f"Gráfica abierta en navegador")
+            self.log("Gráfica abierta en navegador")
         except Exception as e:
-            self.log(f"❌ Error al mostrar gráfica: {str(e)}")
+            self.log(f"❌ Error: {str(e)}")
             messagebox.showerror("Error", str(e))
     
     def export_all(self):
@@ -246,7 +447,6 @@ class EmotionAnalyzerApp:
             messagebox.showwarning("Aviso", "Procesa los datos primero.")
             return
         
-        # Seleccionar carpeta de destino
         export_dir = filedialog.askdirectory(title="Seleccionar carpeta de exportación")
         if not export_dir:
             return
@@ -296,7 +496,7 @@ class EmotionAnalyzerApp:
             messagebox.showinfo("Éxito", f"Archivos exportados en:\n{export_dir}")
             
         except Exception as e:
-            self.log(f"❌ Error al exportar: {str(e)}")
+            self.log(f"❌ Error: {str(e)}")
             messagebox.showerror("Error", str(e))
 
 
