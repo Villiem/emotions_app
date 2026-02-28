@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Emotion Analyzer - Aplicación para análisis de emociones en video
-con ponderación por potencia
+Created on Fri Feb 27 23:49:45 2026
+
 @author: emiliano
+
+Emotion Analyzer - Aplicación para análisis de emociones en video
+con ponderación por potencia (Power Law)
 """
 
 import tkinter as tk
@@ -213,6 +216,7 @@ class EmotionAnalyzerApp:
         
         ttk.Button(btn_frame, text="📊 Procesar datos", command=self.process_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="📈 Ver gráfica", command=self.show_plot).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📊 Positivo vs Neutral", command=self.show_bar_chart).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="💾 Exportar todo", command=self.export_all).pack(side=tk.LEFT, padx=5)
         
         # === Sección: Log/Status ===
@@ -369,6 +373,63 @@ class EmotionAnalyzerApp:
             self.log(f"❌ Error: {str(e)}")
             messagebox.showerror("Error", f"Error al procesar:\n{str(e)}")
     
+    def create_bar_chart(self):
+        """Crea gráfica de barras: Positivo (Gusto) vs Neutral (suma del resto)."""
+        if self.df_weighted is None:
+            return None
+        
+        df = self.df_weighted
+        
+        # Filtrar último segundo si está activado
+        if self.remove_last_second.get():
+            max_sec = df["segundos"].max()
+            df = df.filter(pl.col("segundos") < max_sec)
+        
+        segundos = df["segundos"].to_list()
+        
+        # Positivo = Gusto
+        positivo = df["Gusto_pw"].to_list() if "Gusto_pw" in df.columns else [0] * len(segundos)
+        
+        # Neutral = suma de las demás emociones
+        neutral_cols = ["Enojo_pw", "Disgusto_pw", "Miedo_pw", "Atención_pw", 
+                        "Escepticismo_pw", "Sorpresa_pw"]
+        available_cols = [c for c in neutral_cols if c in df.columns]
+        
+        if available_cols:
+            neutral = df.select(pl.sum_horizontal(available_cols)).to_series().to_list()
+        else:
+            neutral = [0] * len(segundos)
+        
+        fig = go.Figure()
+        
+        # Barras Positivo (Gusto)
+        fig.add_trace(go.Bar(
+            x=segundos,
+            y=positivo,
+            name="Positivo",
+            marker_color="#1565C0"
+        ))
+        
+        # Barras Neutral (suma)
+        fig.add_trace(go.Bar(
+            x=segundos,
+            y=neutral,
+            name="Neutral",
+            marker_color="#E65100"
+        ))
+        
+        fig.update_layout(
+            title="Positivo vs Neutral (Ponderado)",
+            xaxis_title="Segundos",
+            yaxis_title="Intensidad",
+            barmode="group",
+            template="plotly_white",
+            font=dict(family="Arial, sans-serif", size=12),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+        )
+        
+        return fig
+    
     def create_plot(self):
         """Crea la gráfica de emociones."""
         if self.df_original is None:
@@ -441,6 +502,22 @@ class EmotionAnalyzerApp:
             self.log(f"❌ Error: {str(e)}")
             messagebox.showerror("Error", str(e))
     
+    def show_bar_chart(self):
+        """Muestra la gráfica de barras Positivo vs Neutral."""
+        if self.df_weighted is None:
+            messagebox.showwarning("Aviso", "Procesa los datos primero.")
+            return
+        
+        try:
+            fig = self.create_bar_chart()
+            temp_path = Path.home() / "emotion_bar_chart_temp.html"
+            fig.write_html(str(temp_path))
+            webbrowser.open(f"file://{temp_path}")
+            self.log("Gráfica de barras abierta en navegador")
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}")
+            messagebox.showerror("Error", str(e))
+    
     def export_all(self):
         """Exporta datos procesados y gráfica."""
         if self.df_original is None:
@@ -470,6 +547,12 @@ class EmotionAnalyzerApp:
             fig = self.create_plot()
             fig.write_html(str(plot_path))
             self.log(f"Exportado: {plot_path.name}")
+            
+            # Exportar gráfica de barras
+            bar_path = export_path / f"{base_name}_positivo_vs_neutral.html"
+            fig_bar = self.create_bar_chart()
+            fig_bar.write_html(str(bar_path))
+            self.log(f"Exportado: {bar_path.name}")
             
             # Exportar curva de pesos
             curve_path = export_path / f"{base_name}_curva_pesos.html"
