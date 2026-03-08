@@ -24,79 +24,101 @@ class EmotionAnalyzerApp:
     EMOTION_COLS = ["Negative", "Disgust", "Fear", "Sadness", "Skepticism", 
                     "Neutral", "Surprise", "Delight"]
     
-    # Traducción al español (Sadness → Atención)
+    # Traducción al español (Sadness → Atención/Tristeza)
     EMOTION_TRANSLATION = {
-        "Negative": "Enojo",
+        "Negative": "Negativo",
         "Disgust": "Disgusto", 
         "Fear": "Miedo",
-        "Sadness": "Atención",
+        "Sadness": "Atención/Tristeza",
         "Skepticism": "Escepticismo",
         "Neutral": "Neutral",
         "Surprise": "Sorpresa",
-        "Delight": "Gusto"
+        "Delight": "Deleite"
+    }
+    
+    # Multiplicadores por emoción (2.5 para todas excepto Atención/Tristeza que es 2.0)
+    EMOTION_MULTIPLIERS = {
+        "Negativo": 2.5,
+        "Disgusto": 2.5,
+        "Miedo": 2.5,
+        "Atención/Tristeza": 2.0,
+        "Escepticismo": 2.5,
+        "Neutral": 2.5,
+        "Sorpresa": 2.5,
+        "Deleite": 2.5
     }
     
     # Paletas de colores predefinidas
     PALETTES = {
+        "Default": {
+            "Negativo": "#DE2000",
+            "Disgusto": "#F7FF4D",
+            "Miedo": "#7A7A7A",
+            "Atención/Tristeza": "#3D8CE3",
+            "Escepticismo": "#9304CC",
+            "Neutral": "#95A5A6",
+            "Sorpresa": "#05CC04",
+            "Deleite": "#F5BB27"
+        },
         "Vibrante": {
-            "Enojo": "#E74C3C",
+            "Negativo": "#E74C3C",
             "Disgusto": "#9B59B6",
             "Miedo": "#34495E",
-            "Atención": "#3498DB",
+            "Atención/Tristeza": "#3498DB",
             "Escepticismo": "#F39C12",
             "Neutral": "#95A5A6",
             "Sorpresa": "#1ABC9C",
-            "Gusto": "#2ECC71"
+            "Deleite": "#2ECC71"
         },
         "Escala de grises": {
-            "Enojo": "#1A1A1A",
+            "Negativo": "#1A1A1A",
             "Disgusto": "#333333",
             "Miedo": "#4D4D4D",
-            "Atención": "#666666",
+            "Atención/Tristeza": "#666666",
             "Escepticismo": "#808080",
             "Neutral": "#999999",
             "Sorpresa": "#B3B3B3",
-            "Gusto": "#CCCCCC"
+            "Deleite": "#CCCCCC"
         },
         "Pastel": {
-            "Enojo": "#FFB3BA",
+            "Negativo": "#FFB3BA",
             "Disgusto": "#BAFFC9",
             "Miedo": "#BAE1FF",
-            "Atención": "#FFFFBA",
+            "Atención/Tristeza": "#FFFFBA",
             "Escepticismo": "#FFD9BA",
             "Neutral": "#E0BBE4",
             "Sorpresa": "#D4F0F0",
-            "Gusto": "#CCE2CB"
+            "Deleite": "#CCE2CB"
         },
         "Cálidos": {
-            "Enojo": "#D32F2F",
+            "Negativo": "#D32F2F",
             "Disgusto": "#F57C00",
             "Miedo": "#FFA000",
-            "Atención": "#FFCA28",
+            "Atención/Tristeza": "#FFCA28",
             "Escepticismo": "#FFE082",
             "Neutral": "#A1887F",
             "Sorpresa": "#FF7043",
-            "Gusto": "#FF5722"
+            "Deleite": "#FF5722"
         },
         "Fríos": {
-            "Enojo": "#0D47A1",
+            "Negativo": "#0D47A1",
             "Disgusto": "#1565C0",
             "Miedo": "#1976D2",
-            "Atención": "#2196F3",
+            "Atención/Tristeza": "#2196F3",
             "Escepticismo": "#42A5F5",
             "Neutral": "#64B5F6",
             "Sorpresa": "#00ACC1",
-            "Gusto": "#26A69A"
+            "Deleite": "#26A69A"
         },
         "Alto contraste": {
-            "Enojo": "#FF0000",
+            "Negativo": "#FF0000",
             "Disgusto": "#00FF00",
             "Miedo": "#0000FF",
-            "Atención": "#FFFF00",
+            "Atención/Tristeza": "#FFFF00",
             "Escepticismo": "#FF00FF",
             "Neutral": "#00FFFF",
             "Sorpresa": "#FF8000",
-            "Gusto": "#8000FF"
+            "Deleite": "#8000FF"
         }
     }
     
@@ -111,15 +133,15 @@ class EmotionAnalyzerApp:
         self.a_param = tk.DoubleVar(value=4.5167)
         self.b_param = tk.DoubleVar(value=-0.228)
         self.remove_last_second = tk.BooleanVar(value=False)
-        self.selected_palette = tk.StringVar(value="Vibrante")
+        self.selected_palette = tk.StringVar(value="Default")
         self.df_original = None
         self.df_weighted = None
         
         # Configuración individual por emoción: {emocion: {"color": str, "width": IntVar, "visible": BooleanVar}}
         self.emotion_config = {}
-        for emotion in self.PALETTES["Vibrante"].keys():
+        for emotion in self.PALETTES["Default"].keys():
             self.emotion_config[emotion] = {
-                "color": self.PALETTES["Vibrante"][emotion],
+                "color": self.PALETTES["Default"][emotion],
                 "width": tk.IntVar(value=2),
                 "visible": tk.BooleanVar(value=True)
             }
@@ -334,15 +356,23 @@ class EmotionAnalyzerApp:
         return weights
     
     def apply_power_weighting(self, df, a, b):
-        """Aplica ponderación por potencia."""
+        """Aplica ponderación por potencia y multiplicadores por emoción."""
         segundos = df["segundos"].to_numpy()
         weights = self.power_weights(segundos, a, b)
         emotion_cols = [col for col in df.columns if col != "segundos"]
         
+        # Aplicar peso temporal Y multiplicador por emoción
+        weighted_cols = []
+        for col in emotion_cols:
+            multiplier = self.EMOTION_MULTIPLIERS.get(col, 1.0)
+            weighted_cols.append(
+                (pl.col(col) * pl.lit(weights) * multiplier).alias(f"{col}_pw")
+            )
+        
         return df.select(
             pl.col("segundos"),
             pl.lit(weights).alias("peso_temporal"),
-            *[(pl.col(col) * pl.lit(weights)).alias(f"{col}_pw") for col in emotion_cols]
+            *weighted_cols
         )
     
     def process_data(self):
@@ -374,7 +404,7 @@ class EmotionAnalyzerApp:
             messagebox.showerror("Error", f"Error al procesar:\n{str(e)}")
     
     def create_bar_chart(self):
-        """Crea gráfica de barras: Positivo (Gusto) vs Neutral (suma del resto)."""
+        """Crea gráfica de barras apiladas: Positivo (Deleite) vs Neutral (suma del resto)."""
         if self.df_weighted is None:
             return None
         
@@ -387,11 +417,11 @@ class EmotionAnalyzerApp:
         
         segundos = df["segundos"].to_list()
         
-        # Positivo = Gusto
-        positivo = df["Gusto_pw"].to_list() if "Gusto_pw" in df.columns else [0] * len(segundos)
+        # Positivo = Deleite
+        positivo = df["Deleite_pw"].to_list() if "Deleite_pw" in df.columns else [0] * len(segundos)
         
-        # Neutral = suma de las demás emociones
-        neutral_cols = ["Enojo_pw", "Disgusto_pw", "Miedo_pw", "Atención_pw", 
+        # Neutral = suma de las demás emociones (con nuevo nombre Atención/Tristeza)
+        neutral_cols = ["Negativo_pw", "Disgusto_pw", "Miedo_pw", "Atención/Tristeza_pw", 
                         "Escepticismo_pw", "Sorpresa_pw"]
         available_cols = [c for c in neutral_cols if c in df.columns]
         
@@ -402,7 +432,7 @@ class EmotionAnalyzerApp:
         
         fig = go.Figure()
         
-        # Barras Positivo (Gusto)
+        # Barras Positivo (Deleite) - abajo
         fig.add_trace(go.Bar(
             x=segundos,
             y=positivo,
@@ -410,7 +440,7 @@ class EmotionAnalyzerApp:
             marker_color="#1565C0"
         ))
         
-        # Barras Neutral (suma)
+        # Barras Neutral (suma) - arriba
         fig.add_trace(go.Bar(
             x=segundos,
             y=neutral,
@@ -422,7 +452,7 @@ class EmotionAnalyzerApp:
             title="Positivo vs Neutral (Ponderado)",
             xaxis_title="Segundos",
             yaxis_title="Intensidad",
-            barmode="group",
+            barmode="stack",  # Barras apiladas verticalmente
             template="plotly_white",
             font=dict(family="Arial, sans-serif", size=12),
             legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
